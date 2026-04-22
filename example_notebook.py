@@ -5,6 +5,7 @@
 #     "matplotlib==3.10.8",
 #     "numpy==2.4.4",
 #     "traitlets==5.14.3",
+#     "vega-datasets==0.9.0",
 # ]
 # requires-python = ">=3.13"
 # ///
@@ -61,8 +62,9 @@ def _():
     import marimo as mo
     import numpy as np
     import traitlets
+    from vega_datasets import data
 
-    return anywidget, dataclass, math, mo, np, traitlets
+    return anywidget, data, dataclass, math, mo, np, traitlets
 
 
 @app.cell(hide_code=True)
@@ -483,6 +485,118 @@ def _(FalsePositiveHunter, mo, result):
     )
     hunter
     return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ---
+
+    ## Does this happen with real data? Yes.
+
+    We just showed pure noise producing false positives. The math doesn't
+    care whether the "noise" is synthetic — any time you run many tests
+    with no real effect, ~alpha of them will flag as "significant".
+
+    Below we pull the classic **cars dataset** from `vega-datasets` and
+    p-hack it: split the cars into two groups by coin flip (no real
+    difference between groups), then run a t-test on every numeric
+    feature. Repeat many times. By design every test is null — yet ~5%
+    of them will come up "significant".
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    n_splits = mo.ui.slider(
+        start=50, stop=2000, step=50, value=500, label="random splits"
+    )
+    n_splits
+    return (n_splits,)
+
+
+@app.cell(hide_code=True)
+def _(data, n_splits, normal_cdf, np):
+    def _p_hack_dataset(df, n_splits, seed=1):
+        """Coin-flip cars into two groups; Welch t-test each numeric feature.
+
+        Returns p-values, raw effect sizes (mean_A - mean_B), and the feature
+        tested for every (split, feature) pair — flattened in the same order.
+        """
+        rng = np.random.default_rng(seed)
+        numeric = df.select_dtypes(include="number")
+        X = numeric.to_numpy(dtype=float)
+        X = X[~np.isnan(X).any(axis=1)]
+        n = X.shape[0]
+        feat_names = numeric.columns.tolist()
+
+        p_chunks, e_chunks = [], []
+        for _ in range(n_splits):
+            group = rng.integers(0, 2, size=n).astype(bool)
+            if not group.any() or group.all():
+                continue
+            a = X[group]
+            b = X[~group]
+            mean_diff = a.mean(axis=0) - b.mean(axis=0)
+            se = np.sqrt(
+                a.var(axis=0, ddof=1) / len(a) + b.var(axis=0, ddof=1) / len(b)
+            )
+            se = np.maximum(se, 1e-12)
+            t = mean_diff / se
+            p_chunks.append(2.0 * (1.0 - normal_cdf(np.abs(t))))
+            e_chunks.append(mean_diff)
+
+        return {
+            "p_values": np.concatenate(p_chunks),
+            "effect_sizes": np.concatenate(e_chunks),
+            "features_per_test": feat_names * len(p_chunks),
+            "feature_names": feat_names,
+        }
+
+
+    cars_df = data.cars()
+    cars_phack = _p_hack_dataset(cars_df, n_splits.value)
+    cars_p_values = cars_phack["p_values"]
+    cars_features = cars_phack["feature_names"]
+    cars_total_tests = len(cars_p_values)
+    cars_alpha = 0.05
+    cars_bonf = cars_alpha / cars_total_tests
+    return (
+        cars_alpha,
+        cars_bonf,
+        cars_df,
+        cars_features,
+        cars_p_values,
+        cars_phack,
+        cars_total_tests,
+    )
+
+
+@app.cell(hide_code=True)
+def _(cars_df, cars_features, cars_total_tests, mo, n_splits):
+    mo.md(f"""
+    **Dataset:** `cars.json` — {len(cars_df):,} cars ·
+    features tested: {", ".join(f"`{c}`" for c in cars_features)}
+
+    **Tests run:** {n_splits.value:,} random splits × {len(cars_features)} features
+    = **{cars_total_tests:,}** t-tests, all null by construction.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(FalsePositiveHunter, cars_alpha, cars_bonf, cars_p_values, mo):
+    cars_hunter = mo.ui.anywidget(
+        FalsePositiveHunter(
+            p_values=cars_p_values.tolist(),
+            alpha=float(cars_alpha),
+            bonferroni_threshold=float(cars_bonf),
+            threshold=float(cars_alpha),
+        )
+    )
+    cars_hunter
+    return (cars_hunter,)
 
 
 if __name__ == "__main__":
