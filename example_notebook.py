@@ -599,5 +599,164 @@ def _(FalsePositiveHunter, cars_alpha, cars_bonf, cars_p_values, mo):
     return (cars_hunter,)
 
 
+@app.cell(hide_code=True)
+def _(
+    cars_bonf,
+    cars_df,
+    cars_features,
+    cars_hunter,
+    cars_phack,
+    cars_total_tests,
+    mo,
+    np,
+):
+    _threshold = cars_hunter.value["threshold"]
+    _p_vals = cars_phack["p_values"]
+    _effects = cars_phack["effect_sizes"]
+    _feats = cars_phack["features_per_test"]
+
+    _UNITS = {
+        "Miles_per_Gallon": "mpg",
+        "Cylinders": "cylinders",
+        "Displacement": "cc displacement",
+        "Horsepower": "hp",
+        "Weight_in_lbs": "lbs",
+        "Acceleration": "sec 0-60",
+    }
+
+    _passing = np.where(_p_vals < _threshold)[0]
+    _n_passing = int(len(_passing))
+
+    _items = []
+    if _n_passing > 0:
+        _top = _passing[np.argsort(_p_vals[_passing])[:5]]
+        for _i in _top:
+            _feat = _feats[int(_i)]
+            _eff = float(_effects[int(_i)])
+            _p = float(_p_vals[int(_i)])
+            _dir = "higher" if _eff > 0 else "lower"
+            _unit = _UNITS.get(_feat, _feat)
+            _p_str = f"{_p:.2e}" if _p < 1e-3 else f"{_p:.4f}"
+            _items.append(
+                "<li style='margin-bottom:6px;'>"
+                f"Cohort A exhibited <b>{abs(_eff):.2f} {_unit}</b> {_dir} than Cohort B "
+                f"(<i>p</i> = {_p_str}).</li>"
+            )
+
+    _show_stamp = _n_passing > 0 and _threshold > cars_bonf + 1e-10
+
+    _stamp = (
+        (
+            """
+    <div style="
+        position: absolute;
+        top: 80px;
+        right: 50px;
+        transform: rotate(-14deg);
+        font-family: 'Arial Black', Impact, sans-serif;
+        font-size: 108px;
+        font-weight: 900;
+        color: rgba(190, 30, 30, 0.80);
+        border: 10px double rgba(190, 30, 30, 0.80);
+        padding: 4px 24px;
+        letter-spacing: 8px;
+        pointer-events: none;
+        user-select: none;
+        line-height: 1;
+        z-index: 2;
+    ">FALSE</div>
+    """
+        )
+        if _show_stamp
+        else ""
+    )
+
+    _results_list = (
+        "<ul style='padding-left: 22px; margin: 0 0 14px 0;'>"
+        + "".join(_items)
+        + "</ul>"
+        if _items
+        else "<p style='color:#888; font-style:italic; margin: 0 0 14px 0;'>No findings at this threshold &mdash; there is no paper to publish.</p>"
+    )
+
+    _closing = (
+        (
+            "Our analysis reveals consistent and measurable differences between cohorts "
+            "across multiple vehicle dimensions. We recommend manufacturer review and "
+            "further investigation in light of these findings."
+        )
+        if _n_passing > 0
+        else (
+            "No effects were detected. The null hypothesis could not be rejected."
+        )
+    )
+
+    _threshold_str = (
+        f"{_threshold:.2e}" if _threshold < 1e-3 else f"{_threshold:.4f}"
+    )
+
+    mo.md(f"""
+    <div style="
+        position: relative;
+        max-width: 800px;
+        margin: 20px auto;
+        padding: 44px 56px 40px 56px;
+        background: #fefef8;
+        border: 1px solid #cac8c0;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+        font-family: Georgia, 'Times New Roman', serif;
+        color: #222;
+        line-height: 1.55;
+        overflow: hidden;
+    ">
+        {_stamp}
+        <div style="text-align: center; border-bottom: 1px solid #888; padding-bottom: 14px; margin-bottom: 18px;">
+            <div style="font-size: 10px; color: #666; letter-spacing: 2px; text-transform: uppercase;">
+                Journal of Automotive Cohort Analysis &middot; Vol. 47 &middot; No. 3 &middot; pp. 412-418
+            </div>
+            <div style="font-size: 22px; margin: 10px 0 6px 0; line-height: 1.25; color: #111; font-weight: 700;">
+                Systematic Variation Across Randomly Partitioned Automotive Cohorts
+            </div>
+            <div style="font-size: 15px; font-weight: 400; font-style: italic; color: #444; margin-bottom: 8px;">
+                A Multi-Feature Analysis of {len(cars_df)} Vehicles
+            </div>
+            <div style="font-style: italic; color: #444; font-size: 13px;">
+                M. Anon<sup>1</sup>, J. Hartman<sup>1</sup>, A. Claude<sup>2</sup>
+            </div>
+            <div style="font-size: 10px; color: #666; margin-top: 4px; letter-spacing: 0.5px;">
+                <sup>1</sup>Institute for Premature Publication &middot; <sup>2</sup>Dept. of Exuberant Inference
+            </div>
+        </div>
+
+        <div style="font-size: 13px;">
+            <div style="font-variant: small-caps; letter-spacing: 1.5px; font-size: 13px; margin: 0 0 6px 0; color: #333; font-weight: 700;">Abstract</div>
+            <p style="text-align: justify; margin: 0 0 14px 0;">
+                We analyzed <b>{len(cars_df)}</b> automobiles partitioned into two cohorts
+                and conducted a systematic comparison across {len(cars_features)} mechanical
+                and efficiency attributes. At a significance threshold of
+                <i>p</i> &lt; {_threshold_str}, we identified
+                <b>{_n_passing:,} statistically significant differences</b>.
+                These results have implications for manufacturing specification,
+                regulatory policy, and consumer guidance.
+            </p>
+
+            <div style="font-variant: small-caps; letter-spacing: 1.5px; font-size: 13px; margin: 0 0 6px 0; color: #333; font-weight: 700;">Selected Results</div>
+            {_results_list}
+
+            <div style="font-variant: small-caps; letter-spacing: 1.5px; font-size: 13px; margin: 0 0 6px 0; color: #333; font-weight: 700;">Conclusion</div>
+            <p style="text-align: justify; margin: 0 0 14px 0;">
+                {_closing}
+            </p>
+
+            <div style="font-size: 10px; color: #888; border-top: 1px dashed #bbb; padding-top: 10px; text-align: center; letter-spacing: 0.5px;">
+                Manuscript generated from {cars_total_tests:,} null t-tests on vega-datasets/cars.json.
+                Cohort assignment: uniformly random coin flip per vehicle.
+            </div>
+        </div>
+    </div>
+    """)
+    return
+
+
 if __name__ == "__main__":
     app.run()

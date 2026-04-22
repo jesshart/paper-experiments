@@ -2,7 +2,7 @@
   "version": "1",
   "metadata": {
     "marimo_version": "0.23.2",
-    "script_metadata_hash": "e9a9ae1a2fdd24522d4ab7a07c3996e4"
+    "script_metadata_hash": "621bc37dfb001d333ab3b26206aac2e2"
   },
   "cells": [
     {
@@ -20,7 +20,7 @@
     },
     {
       "id": "ZGjy",
-      "code_hash": "82ea86ff0c34e460d2bbc9af8e8227b5",
+      "code_hash": "25819c669190ddb882d73202588a1842",
       "outputs": [
         {
           "type": "data",
