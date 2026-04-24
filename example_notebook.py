@@ -1338,5 +1338,248 @@ def _(ProbingCompare, mo, probing_result):
     return
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 3. Causal Analysis in High Dimensions
+
+    Causal-discovery methods promise to find the "true" dependency structure
+    in a system. At scale on noisy data they produce dense, confident-looking
+    graphs from variables with **no real relationships at all**.
+
+    Below: we generate N independent "gene expression" variables (pure noise,
+    no real causal structure), then compute the pairwise correlation p-value
+    for every pair — the simplest form of causal-edge discovery. With N = 40
+    variables there are 780 pairs; at p &lt; 0.05 we expect ~39 "causal
+    edges" by pure chance.
+
+    The same `FalsePositiveHunter` widget works as the viewer — this time
+    the grid pixels are pairs of variables rather than voxels or cars-cohort
+    tests. Drag the red threshold and watch an entire causal network
+    materialize out of random noise.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    causal_n_vars = mo.ui.slider(
+        start=10, stop=60, step=5, value=40, label="number of variables"
+    )
+    causal_n_vars
+    return (causal_n_vars,)
+
+
+@app.cell(hide_code=True)
+def _(causal_n_vars, normal_cdf, np):
+    def _causal_null_experiment(n_samples=200, n_vars=40, seed=0):
+        """Independent Gaussian variables; all-pairs marginal correlations + p.
+
+        Under the null, ~alpha of the pairwise tests will flag as "causally
+        linked" purely by chance.
+        """
+        rng = np.random.default_rng(seed)
+        data = rng.normal(0, 1, size=(n_samples, n_vars))
+        Xs = (data - data.mean(axis=0)) / np.maximum(
+            data.std(axis=0, ddof=1), 1e-12
+        )
+
+        n_tests = n_vars * (n_vars - 1) // 2
+        p_values = np.empty(n_tests)
+        correlations = np.empty(n_tests)
+        pair_i = np.empty(n_tests, dtype=int)
+        pair_j = np.empty(n_tests, dtype=int)
+
+        df = n_samples - 2
+        idx = 0
+        for i in range(n_vars):
+            for j in range(i + 1, n_vars):
+                r = float((Xs[:, i] * Xs[:, j]).sum() / (n_samples - 1))
+                t = r * np.sqrt(df / max(1.0 - r * r, 1e-12))
+                p = 2.0 * (1.0 - normal_cdf(np.abs(t)))
+                correlations[idx] = r
+                p_values[idx] = float(p)
+                pair_i[idx] = i
+                pair_j[idx] = j
+                idx += 1
+
+        return {
+            "p_values": p_values,
+            "correlations": correlations,
+            "pair_i": pair_i,
+            "pair_j": pair_j,
+            "n_vars": n_vars,
+            "n_tests": n_tests,
+            "gene_names": [f"GENE_{k + 1:02d}" for k in range(n_vars)],
+        }
+
+
+    causal_result = _causal_null_experiment(
+        n_samples=200, n_vars=causal_n_vars.value, seed=0
+    )
+    causal_alpha = 0.05
+    causal_bonf = causal_alpha / max(causal_result["n_tests"], 1)
+    return causal_alpha, causal_bonf, causal_result
+
+
+@app.cell(hide_code=True)
+def _(FalsePositiveHunter, causal_alpha, causal_bonf, causal_result, mo):
+    causal_hunter = mo.ui.anywidget(
+        FalsePositiveHunter(
+            p_values=causal_result["p_values"].tolist(),
+            alpha=float(causal_alpha),
+            bonferroni_threshold=float(causal_bonf),
+            threshold=float(causal_alpha),
+        )
+    )
+    causal_hunter
+    return (causal_hunter,)
+
+
+@app.cell(hide_code=True)
+def _(causal_bonf, causal_hunter, causal_result, mo, np):
+    _threshold = causal_hunter.value["threshold"]
+    _p_vals = causal_result["p_values"]
+    _corrs = causal_result["correlations"]
+    _ii = causal_result["pair_i"]
+    _jj = causal_result["pair_j"]
+    _genes = causal_result["gene_names"]
+
+    _passing = np.where(_p_vals < _threshold)[0]
+    _n_passing = int(len(_passing))
+
+    _edges = []
+    if _n_passing > 0:
+        _top = _passing[np.argsort(_p_vals[_passing])[:5]]
+        for _k in _top:
+            _i = int(_ii[_k])
+            _j = int(_jj[_k])
+            _r = float(_corrs[_k])
+            _p = float(_p_vals[_k])
+            _p_str = f"{_p:.2e}" if _p < 1e-3 else f"{_p:.4f}"
+            _arrow = "&larr;&rarr;"
+            _edges.append(
+                "<li style='margin-bottom:6px;'>"
+                f"<b>{_genes[_i]}</b> {_arrow} <b>{_genes[_j]}</b> "
+                f"(partial r = {_r:+.3f}, <i>p</i> = {_p_str})</li>"
+            )
+
+    _show_stamp = _n_passing > 0 and _threshold > causal_bonf + 1e-10
+
+    _stamp = (
+        (
+            """
+    <div style="
+        position: absolute;
+        top: 80px;
+        right: 50px;
+        transform: rotate(-14deg);
+        font-family: 'Arial Black', Impact, sans-serif;
+        font-size: 108px;
+        font-weight: 900;
+        color: rgba(190, 30, 30, 0.80);
+        border: 10px double rgba(190, 30, 30, 0.80);
+        padding: 4px 24px;
+        letter-spacing: 8px;
+        pointer-events: none;
+        user-select: none;
+        line-height: 1;
+        z-index: 2;
+    ">FALSE</div>
+    """
+        )
+        if _show_stamp
+        else ""
+    )
+
+    _edges_list = (
+        "<ul style='padding-left: 22px; margin: 0 0 14px 0;'>"
+        + "".join(_edges)
+        + "</ul>"
+        if _edges
+        else "<p style='color:#888; font-style:italic; margin: 0 0 14px 0;'>No causal edges detected at this threshold.</p>"
+    )
+
+    _closing = (
+        (
+            "Our findings reveal a tightly interconnected regulatory network with "
+            "implications for pathway-level therapeutic targeting. We propose further "
+            "validation in independent cohorts."
+        )
+        if _n_passing > 0
+        else (
+            "No significant causal relationships were identified. The studied variables "
+            "appear to be mutually independent."
+        )
+    )
+
+    _threshold_str = (
+        f"{_threshold:.2e}" if _threshold < 1e-3 else f"{_threshold:.4f}"
+    )
+    _n_vars = causal_result["n_vars"]
+    _n_tests = causal_result["n_tests"]
+
+    mo.md(f"""
+    <div style="
+        position: relative;
+        max-width: 800px;
+        margin: 20px auto;
+        padding: 44px 56px 40px 56px;
+        background: #fefef8;
+        border: 1px solid #cac8c0;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+        font-family: Georgia, 'Times New Roman', serif;
+        color: #222;
+        line-height: 1.55;
+        overflow: hidden;
+    ">
+        {_stamp}
+        <div style="text-align: center; border-bottom: 1px solid #888; padding-bottom: 14px; margin-bottom: 18px;">
+            <div style="font-size: 10px; color: #666; letter-spacing: 2px; text-transform: uppercase;">
+                Journal of Network Biology &middot; Vol. 33 &middot; No. 7 &middot; pp. 1104-1117
+            </div>
+            <div style="font-size: 22px; margin: 10px 0 6px 0; line-height: 1.25; color: #111; font-weight: 700;">
+                A Causal Expression Network Across {_n_vars} Candidate Genes
+            </div>
+            <div style="font-size: 15px; font-weight: 400; font-style: italic; color: #444; margin-bottom: 8px;">
+                Pairwise Dependency Mapping from High-Dimensional Assay Data
+            </div>
+            <div style="font-style: italic; color: #444; font-size: 13px;">
+                R. Noise<sup>1</sup>, I. Spurious<sup>1</sup>, C. Hen-Picker<sup>2</sup>
+            </div>
+            <div style="font-size: 10px; color: #666; margin-top: 4px; letter-spacing: 0.5px;">
+                <sup>1</sup>Center for Overconfident Inference &middot; <sup>2</sup>Institute for Network Overfitting
+            </div>
+        </div>
+
+        <div style="font-size: 13px;">
+            <div style="font-variant: small-caps; letter-spacing: 1.5px; font-size: 13px; margin: 0 0 6px 0; color: #333; font-weight: 700;">Abstract</div>
+            <p style="text-align: justify; margin: 0 0 14px 0;">
+                Using a panel of <b>{_n_vars}</b> candidate genes assayed across 200 samples, we
+                mapped pairwise causal dependencies through a standard correlation-based discovery
+                procedure. At significance threshold <i>p</i> &lt; {_threshold_str} we identified
+                <b>{_n_passing:,} putative causal edges</b> out of {_n_tests:,} candidate pairs.
+                These findings reveal a tightly interconnected regulatory architecture with
+                implications for pathway-level drug targeting.
+            </p>
+
+            <div style="font-variant: small-caps; letter-spacing: 1.5px; font-size: 13px; margin: 0 0 6px 0; color: #333; font-weight: 700;">Top Inferred Edges</div>
+            {_edges_list}
+
+            <div style="font-variant: small-caps; letter-spacing: 1.5px; font-size: 13px; margin: 0 0 6px 0; color: #333; font-weight: 700;">Conclusion</div>
+            <p style="text-align: justify; margin: 0 0 14px 0;">
+                {_closing}
+            </p>
+
+            <div style="font-size: 10px; color: #888; border-top: 1px dashed #bbb; padding-top: 10px; text-align: center; letter-spacing: 0.5px;">
+                Manuscript generated from {_n_tests:,} all-pairs correlation tests on {_n_vars}
+                independent Gaussian variables. Data contains no real causal structure.
+            </div>
+        </div>
+    </div>
+    """)
+    return
+
+
 if __name__ == "__main__":
     app.run()
