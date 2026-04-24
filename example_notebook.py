@@ -1086,5 +1086,257 @@ def _(
     return
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 2. Probing
+
+    Probing classifiers are the "did the model encode X?" tool: train a
+    linear probe on a model's internal activations to decode some property,
+    and take success to mean the model "knows about" that property.
+
+    Hewitt & Liang (2019) showed the trap: **a probe can succeed even when
+    the model is not using the decoded information for its output**. A
+    high-dimensional projection preserves almost everything fed into it — a
+    probe can recover a feature from the activations even if the downstream
+    readout completely ignores it.
+
+    Below: synthetic features flow through a fixed random hidden layer. A
+    linear readout is trained on `y = sin(1.5·x1) + noise` — only `x1`
+    matters. For every feature we measure:
+
+    - **Probe R²** — can a linear probe decode `xⱼ` from the hidden activations?
+    - **Ablation impact** — when we replace `xⱼ` with its mean, how much
+      does the model's output change?
+
+    The probe says "yes, it's all in there!" The ablation says "no, only
+    `x1` is actually used." Both are true at the same time.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    probing_n_nuisance = mo.ui.slider(
+        start=2, stop=20, step=1, value=5, label="nuisance features"
+    )
+    probing_n_nuisance
+    return (probing_n_nuisance,)
+
+
+@app.cell(hide_code=True)
+def _(np, probing_n_nuisance):
+    from sklearn.linear_model import Ridge
+
+
+    def _probing_experiment(n_samples=500, n_nuisance=5, hidden=32, seed=0):
+        """Fixed random hidden layer + trained linear readout. Only x1 drives y.
+
+        For each feature xj, computes: (a) the R² of a linear probe that
+        decodes xj from the hidden activations, and (b) the RMS change in
+        model output when xj is replaced by its mean.
+        """
+        rng = np.random.default_rng(seed)
+        k = 1 + n_nuisance
+        X = rng.normal(0, 1, size=(n_samples, k))
+        y = np.sin(X[:, 0] * 1.5) + 0.1 * rng.normal(size=n_samples)
+
+        W0 = rng.normal(0, 1 / np.sqrt(k), size=(k, hidden))
+        b0 = rng.normal(0, 0.1, size=hidden)
+        H = np.tanh(X @ W0 + b0)
+
+        readout = Ridge(alpha=0.1).fit(H, y)
+        y_pred = readout.predict(H)
+
+        probe_r2 = []
+        for j in range(k):
+            p = Ridge(alpha=0.01).fit(H, X[:, j])
+            probe_r2.append(float(max(0.0, p.score(H, X[:, j]))))
+
+        abl_deltas = []
+        for j in range(k):
+            X_abl = X.copy()
+            X_abl[:, j] = X[:, j].mean()
+            H_abl = np.tanh(X_abl @ W0 + b0)
+            y_abl = readout.predict(H_abl)
+            abl_deltas.append(float(np.sqrt(np.mean((y_abl - y_pred) ** 2))))
+
+        abl_arr = np.array(abl_deltas)
+        abl_norm = (abl_arr / max(float(abl_arr.max()), 1e-12)).tolist()
+
+        return {
+            "feature_names": [f"x{j + 1}" for j in range(k)],
+            "probe_r2": probe_r2,
+            "ablation_impact": abl_norm,
+            "ablation_raw": abl_deltas,
+        }
+
+
+    probing_result = _probing_experiment(
+        n_nuisance=probing_n_nuisance.value, seed=1
+    )
+    return (probing_result,)
+
+
+@app.cell(hide_code=True)
+def _(anywidget, traitlets):
+    class ProbingCompare(anywidget.AnyWidget):
+        """Grouped bar chart: per-feature probe R² vs ablation impact.
+
+        Visualizes the Hewitt-Liang insight: probes can recover features the
+        model does not actually use for its output.
+        """
+
+        _esm = r"""
+        function svgEl(tag, attrs) {
+            const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+            for (const k in attrs) e.setAttribute(k, attrs[k]);
+            return e;
+        }
+
+        function render({ model, el }) {
+            const wrapper = document.createElement("div");
+            wrapper.style.cssText = `
+                font-family: sans-serif;
+                color: #222;
+                background: #fafaf7;
+                border: 1px solid #d8d8d0;
+                border-radius: 8px;
+                padding: 14px;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+            `;
+
+            const W = 640, H = 340;
+            const M = { l: 50, r: 15, t: 50, b: 42 };
+            const PW = W - M.l - M.r;
+            const PH = H - M.t - M.b;
+
+            const svg = svgEl("svg", { width: W, height: H, viewBox: "0 0 " + W + " " + H });
+            svg.style.cssText = "background: #fff; border: 1px solid #ccc; border-radius: 4px; user-select: none;";
+
+            const title = svgEl("text", {
+                x: W / 2, y: 20, "text-anchor": "middle",
+                "font-size": 13, "font-weight": 600, fill: "#333",
+            });
+            title.textContent = "Probe-decodability vs ablation-impact, per feature";
+            svg.appendChild(title);
+
+            const legend = svgEl("g", {});
+            legend.appendChild(svgEl("rect", { x: 70, y: 30, width: 14, height: 10, fill: "#3a77bf" }));
+            const l1 = svgEl("text", { x: 90, y: 39, "font-size": 11, fill: "#333" });
+            l1.textContent = "Probe R² (linear decode from hidden)";
+            legend.appendChild(l1);
+            legend.appendChild(svgEl("rect", { x: 360, y: 30, width: 14, height: 10, fill: "#c44" }));
+            const l2 = svgEl("text", { x: 380, y: 39, "font-size": 11, fill: "#333" });
+            l2.textContent = "Ablation impact on output (normalized)";
+            legend.appendChild(l2);
+            svg.appendChild(legend);
+
+            svg.appendChild(svgEl("line", { x1: M.l, y1: M.t, x2: M.l, y2: M.t + PH, stroke: "#333" }));
+            for (let i = 0; i <= 4; i++) {
+                const yv = i / 4;
+                const py = M.t + PH - yv * PH;
+                svg.appendChild(svgEl("line", { x1: M.l - 4, y1: py, x2: M.l, y2: py, stroke: "#333" }));
+                const tk = svgEl("text", {
+                    x: M.l - 6, y: py + 3, "font-size": 10, fill: "#555", "text-anchor": "end",
+                });
+                tk.textContent = yv.toFixed(2);
+                svg.appendChild(tk);
+            }
+            const ylab = svgEl("text", {
+                x: 14, y: M.t + PH / 2, "text-anchor": "middle", "font-size": 11, fill: "#333",
+                transform: "rotate(-90 14 " + (M.t + PH / 2) + ")",
+            });
+            ylab.textContent = "score";
+            svg.appendChild(ylab);
+
+            svg.appendChild(svgEl("line", { x1: M.l, y1: M.t + PH, x2: M.l + PW, y2: M.t + PH, stroke: "#333" }));
+
+            const barsGroup = svgEl("g", {});
+            svg.appendChild(barsGroup);
+
+            const readout = document.createElement("div");
+            readout.style.cssText = "font-family: ui-monospace, monospace; font-size: 13px; line-height: 1.55; padding: 10px 12px; background: #fff; color: #222; border: 1px solid #e0e0d8; border-radius: 4px;";
+
+            wrapper.appendChild(svg);
+            wrapper.appendChild(readout);
+            el.appendChild(wrapper);
+
+            function redraw() {
+                while (barsGroup.firstChild) barsGroup.removeChild(barsGroup.firstChild);
+                const features = model.get("feature_names");
+                const probes = model.get("probe_r2");
+                const ablations = model.get("ablation_impact");
+                const k = features.length;
+                if (k === 0) return;
+                const slot = PW / k;
+                const barW = Math.min(24, slot * 0.35);
+
+                for (let i = 0; i < k; i++) {
+                    const cx = M.l + i * slot + slot / 2;
+                    const probeH = Math.max(0, Math.min(1, probes[i])) * PH;
+                    barsGroup.appendChild(svgEl("rect", {
+                        x: cx - barW - 2, y: M.t + PH - probeH,
+                        width: barW, height: probeH,
+                        fill: "#3a77bf", opacity: 0.85,
+                    }));
+                    const ablH = Math.max(0, Math.min(1, ablations[i])) * PH;
+                    barsGroup.appendChild(svgEl("rect", {
+                        x: cx + 2, y: M.t + PH - ablH,
+                        width: barW, height: ablH,
+                        fill: "#c44", opacity: 0.85,
+                    }));
+                    const lbl = svgEl("text", {
+                        x: cx, y: M.t + PH + 16, "text-anchor": "middle",
+                        "font-size": 11, fill: "#333",
+                        "font-weight": i === 0 ? 700 : 400,
+                    });
+                    lbl.textContent = features[i];
+                    barsGroup.appendChild(lbl);
+                }
+
+                const nProbeHigh = probes.filter(function(r) { return r > 0.5; }).length;
+                const nAblHigh = ablations.filter(function(a) { return a > 0.1; }).length;
+                readout.innerHTML =
+                    "Probes can decode <b style='color:#3a77bf'>" + nProbeHigh + " of " + k +
+                    " features</b> from the hidden activations. " +
+                    "Ablating features changes the model's output for only " +
+                    "<b style='color:#c44'>" + nAblHigh + " of " + k + "</b>.<br>" +
+                    "<span style='color:#555'>The representation <i>contains</i> the nuisance features; " +
+                    "the output does not <i>use</i> them. A successful probe is not evidence " +
+                    "that the model relies on the decoded feature.</span>";
+            }
+
+            model.on("change:probe_r2", redraw);
+            model.on("change:ablation_impact", redraw);
+            model.on("change:feature_names", redraw);
+            redraw();
+        }
+
+        export default { render };
+        """
+
+        feature_names = traitlets.List(trait=traitlets.Unicode()).tag(sync=True)
+        probe_r2 = traitlets.List(trait=traitlets.Float()).tag(sync=True)
+        ablation_impact = traitlets.List(trait=traitlets.Float()).tag(sync=True)
+
+    return (ProbingCompare,)
+
+
+@app.cell(hide_code=True)
+def _(ProbingCompare, mo, probing_result):
+    probing_widget = mo.ui.anywidget(
+        ProbingCompare(
+            feature_names=probing_result["feature_names"],
+            probe_r2=probing_result["probe_r2"],
+            ablation_impact=probing_result["ablation_impact"],
+        )
+    )
+    probing_widget
+    return
+
+
 if __name__ == "__main__":
     app.run()
