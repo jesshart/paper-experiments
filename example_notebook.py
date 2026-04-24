@@ -4,6 +4,7 @@
 #     "marimo",
 #     "matplotlib==3.10.8",
 #     "numpy==2.4.4",
+#     "scikit-learn==1.8.0",
 #     "traitlets==5.14.3",
 #     "vega-datasets==0.9.0",
 # ]
@@ -755,6 +756,333 @@ def _(
         </div>
     </div>
     """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ---
+
+    # The same trap, in modern clothes
+
+    Everything above was classical statistics dressed for fMRI and for cars.
+    The same failure mode shows up across modern ML interpretability tools.
+    Below: three case studies where confident-looking explanations turn out
+    to be artifacts of high-dimensional noise, not of anything the model
+    actually learned or the data actually contains.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 1. Feature Attribution
+
+    Saliency maps, Grad-CAM, SHAP, Integrated Gradients — the promise is:
+    "here are the parts of the input the model cared about." Adebayo et al.
+    (2018) showed that many popular attribution methods produce **nearly
+    identical heatmaps even when you randomize the model's weights**. That
+    means the pretty overlay is mostly a projection of the input, not
+    evidence of what the model learned.
+
+    Below: we train a tiny linear classifier on synthetic 16×16 shapes
+    (circles vs squares), then compute input-times-gradient saliency for
+    both the trained weights and a fresh random model. The "hot" regions
+    line up on the shape in both cases — because `|W·x|` is near zero
+    wherever `x` is near zero, regardless of what `W` is.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(np):
+    from sklearn.linear_model import LogisticRegression
+
+
+    def _make_shape_dataset(n_per_class=60, size=16, noise=0.12, seed=0):
+        """Generate 16x16 grayscale shape images (0=disk, 1=square) with
+        position jitter and Gaussian noise. Returns flat (n, size*size) array."""
+        rng = np.random.default_rng(seed)
+        yy, xx = np.mgrid[0:size, 0:size]
+        imgs, labels = [], []
+        for lbl in (0, 1):
+            for _ in range(n_per_class):
+                img = rng.normal(0.0, noise, size=(size, size))
+                cy = size // 2 + int(rng.integers(-2, 3))
+                cx = size // 2 + int(rng.integers(-2, 3))
+                r = 3
+                if lbl == 0:
+                    mask = (yy - cy) ** 2 + (xx - cx) ** 2 <= r * r
+                else:
+                    mask = (np.abs(yy - cy) <= r) & (np.abs(xx - cx) <= r)
+                img = img + 0.9 * mask
+                imgs.append(img.ravel())
+                labels.append(lbl)
+        X = np.array(imgs, dtype=float)
+        y = np.array(labels, dtype=int)
+        perm = rng.permutation(len(X))
+        return X[perm], y[perm]
+
+
+    _attr_X, _attr_y = _make_shape_dataset(n_per_class=60, seed=0)
+    _attr_clf = LogisticRegression(max_iter=1000, C=10.0).fit(_attr_X, _attr_y)
+    attr_W = _attr_clf.coef_[0].astype(float)
+    attr_b = float(_attr_clf.intercept_[0])
+    attr_train_acc = float(_attr_clf.score(_attr_X, _attr_y))
+
+    attr_X_test, attr_y_test = _make_shape_dataset(n_per_class=10, seed=7)
+    attr_label_names = ["circle", "square"]
+    return attr_W, attr_X_test, attr_label_names, attr_y_test
+
+
+@app.cell(hide_code=True)
+def _(anywidget, traitlets):
+    class AttributionCompare(anywidget.AnyWidget):
+        """Side-by-side saliency comparison: trained vs random model weights.
+
+        The demo shows input-times-gradient saliency |W * x| for both a trained
+        linear classifier and a fresh model with random weights of matching scale.
+        Both maps light up the shape region — because |W * x| is near zero
+        wherever x is near zero, regardless of W. The fingerprint of the input
+        dominates the fingerprint of the model.
+        """
+
+        _esm = r"""
+        function render({ model, el }) {
+            const wrapper = document.createElement("div");
+            wrapper.style.cssText = `
+                font-family: sans-serif;
+                color: #222;
+                background: #fafaf7;
+                border: 1px solid #d8d8d0;
+                border-radius: 8px;
+                padding: 14px;
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+            `;
+
+            const row = document.createElement("div");
+            row.style.cssText = "display: flex; gap: 14px; justify-content: center; flex-wrap: wrap;";
+
+            const DISPLAY = 180;
+
+            function makePanel(title) {
+                const p = document.createElement("div");
+                p.style.cssText = "display: flex; flex-direction: column; align-items: center; gap: 4px;";
+                const t = document.createElement("div");
+                t.style.cssText = "font-size: 12px; color: #333; font-weight: 500;";
+                t.textContent = title;
+                const c = document.createElement("canvas");
+                c.width = DISPLAY;
+                c.height = DISPLAY;
+                c.style.cssText = "border: 1px solid #aaa; image-rendering: pixelated; background: #000;";
+                p.appendChild(t);
+                p.appendChild(c);
+                return { panel: p, canvas: c, title: t };
+            }
+
+            const pInput = makePanel("Input image");
+            const pTrained = makePanel("Saliency — trained model");
+            const pRandom = makePanel("Saliency — random model");
+            row.appendChild(pInput.panel);
+            row.appendChild(pTrained.panel);
+            row.appendChild(pRandom.panel);
+
+            const controls = document.createElement("div");
+            controls.style.cssText = "display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center;";
+
+            function makeBtn(label, onClick) {
+                const b = document.createElement("button");
+                b.textContent = label;
+                b.style.cssText = "padding: 6px 12px; border: 1px solid #888; background: #fff; color: #222; border-radius: 4px; cursor: pointer; font-size: 12px; font-family: sans-serif;";
+                b.onclick = onClick;
+                return b;
+            }
+
+            const idxLabel = document.createElement("span");
+            idxLabel.style.cssText = "font-family: ui-monospace, monospace; font-size: 12px; color: #333; min-width: 110px; text-align: center;";
+
+            controls.appendChild(makeBtn("Prev", () => {
+                const n = model.get("n_test");
+                let s = model.get("selected");
+                s = (s - 1 + n) % n;
+                model.set("selected", s);
+                model.save_changes();
+            }));
+            controls.appendChild(idxLabel);
+            controls.appendChild(makeBtn("Next", () => {
+                const n = model.get("n_test");
+                let s = model.get("selected");
+                s = (s + 1) % n;
+                model.set("selected", s);
+                model.save_changes();
+            }));
+            controls.appendChild(makeBtn("Re-roll random model", () => {
+                model.set("random_seed", model.get("random_seed") + 1);
+                model.save_changes();
+            }));
+
+            const readout = document.createElement("div");
+            readout.style.cssText = "font-family: ui-monospace, monospace; font-size: 13px; line-height: 1.55; padding: 10px 12px; background: #fff; color: #222; border: 1px solid #e0e0d8; border-radius: 4px;";
+
+            wrapper.appendChild(row);
+            wrapper.appendChild(controls);
+            wrapper.appendChild(readout);
+            el.appendChild(wrapper);
+
+            function mulberry32(seed) {
+                return function() {
+                    seed = (seed + 0x6D2B79F5) | 0;
+                    let t = seed;
+                    t = Math.imul(t ^ (t >>> 15), t | 1);
+                    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+                    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+                };
+            }
+            function randn(rng) {
+                const u = 1 - rng();
+                const v = rng();
+                return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+            }
+            function stddev(arr) {
+                let m = 0;
+                for (const v of arr) m += v;
+                m /= arr.length;
+                let s = 0;
+                for (const v of arr) s += (v - m) * (v - m);
+                return Math.sqrt(s / arr.length);
+            }
+            function pearson(a, b) {
+                const n = a.length;
+                let sa=0, sb=0, saa=0, sbb=0, sab=0;
+                for (let i = 0; i < n; i++) {
+                    sa += a[i]; sb += b[i];
+                    saa += a[i] * a[i]; sbb += b[i] * b[i];
+                    sab += a[i] * b[i];
+                }
+                const ma = sa / n, mb = sb / n;
+                const cov = sab / n - ma * mb;
+                const va = saa / n - ma * ma, vb = sbb / n - mb * mb;
+                return cov / (Math.sqrt(va * vb) + 1e-12);
+            }
+
+            function grayscale(t) {
+                t = Math.max(0, Math.min(1, t));
+                const v = Math.floor(t * 255);
+                return "rgb(" + v + "," + v + "," + v + ")";
+            }
+            function hot(t) {
+                t = Math.max(0, Math.min(1, t));
+                let r, g, b;
+                if (t < 0.33) { r = Math.floor(t / 0.33 * 255); g = 0; b = 0; }
+                else if (t < 0.67) { r = 255; g = Math.floor((t - 0.33) / 0.34 * 255); b = 0; }
+                else { r = 255; g = 255; b = Math.floor((t - 0.67) / 0.33 * 255); }
+                return "rgb(" + r + "," + g + "," + b + ")";
+            }
+
+            function drawImage(canvas, arr, colormap, clipPct) {
+                const ctx = canvas.getContext("2d");
+                const size = Math.round(Math.sqrt(arr.length));
+                // robust normalization: clip top 2%
+                const sorted = arr.slice().sort((a, b) => a - b);
+                const mn = sorted[Math.floor(sorted.length * (clipPct || 0))];
+                const mx = sorted[Math.floor(sorted.length * (1 - (clipPct || 0))) - 1];
+                const range = Math.max(mx - mn, 1e-12);
+                const px = canvas.width / size;
+                for (let i = 0; i < size; i++) {
+                    for (let j = 0; j < size; j++) {
+                        const val = (arr[i * size + j] - mn) / range;
+                        ctx.fillStyle = colormap(val);
+                        ctx.fillRect(Math.floor(j * px), Math.floor(i * px), Math.ceil(px), Math.ceil(px));
+                    }
+                }
+            }
+
+            function refresh() {
+                const images = model.get("images");
+                const labels = model.get("labels");
+                const Wt = model.get("W_trained");
+                const size = model.get("image_size");
+                const n = model.get("n_test");
+                const names = model.get("label_names");
+                const sel = model.get("selected");
+                const seed = model.get("random_seed");
+
+                const pixels = size * size;
+                const img = images.slice(sel * pixels, (sel + 1) * pixels);
+
+                const wStd = stddev(Wt);
+                const rng = mulberry32(seed * 1337 + 42);
+                const Wr = new Array(pixels);
+                for (let i = 0; i < pixels; i++) Wr[i] = randn(rng) * wStd;
+
+                const trainedSal = new Array(pixels);
+                const randomSal = new Array(pixels);
+                for (let i = 0; i < pixels; i++) {
+                    trainedSal[i] = Math.abs(Wt[i] * img[i]);
+                    randomSal[i] = Math.abs(Wr[i] * img[i]);
+                }
+
+                drawImage(pInput.canvas, img, grayscale, 0.02);
+                drawImage(pTrained.canvas, trainedSal, hot, 0.02);
+                drawImage(pRandom.canvas, randomSal, hot, 0.02);
+
+                pInput.title.textContent = "Input: " + names[labels[sel]];
+                idxLabel.textContent = "Image " + (sel + 1) + " of " + n;
+
+                const r = pearson(trainedSal, randomSal);
+                const rColor = r > 0.5 ? "#c44" : (r > 0.2 ? "#b80" : "#555");
+                readout.innerHTML =
+                    "<b>Pearson r between trained and random saliency:</b> " +
+                    "<span style='color:" + rColor + "; font-weight:700;'>" + r.toFixed(3) + "</span><br>" +
+                    "<span style='color:#555;'>Both maps emphasize the shape region because " +
+                    "saliency = |W &middot; x| is near zero wherever x is near zero &mdash; " +
+                    "regardless of whether W came from training or from random noise.</span>";
+            }
+
+            model.on("change:selected", refresh);
+            model.on("change:random_seed", refresh);
+            refresh();
+        }
+
+        export default { render };
+        """
+
+        images = traitlets.List(trait=traitlets.Float()).tag(sync=True)
+        labels = traitlets.List(trait=traitlets.Int()).tag(sync=True)
+        W_trained = traitlets.List(trait=traitlets.Float()).tag(sync=True)
+        image_size = traitlets.Int(16).tag(sync=True)
+        n_test = traitlets.Int(0).tag(sync=True)
+        label_names = traitlets.List(trait=traitlets.Unicode()).tag(sync=True)
+        selected = traitlets.Int(0).tag(sync=True)
+        random_seed = traitlets.Int(0).tag(sync=True)
+
+    return (AttributionCompare,)
+
+
+@app.cell(hide_code=True)
+def _(
+    AttributionCompare,
+    attr_W,
+    attr_X_test,
+    attr_label_names,
+    attr_y_test,
+    mo,
+):
+    attr_widget = mo.ui.anywidget(
+        AttributionCompare(
+            images=attr_X_test.flatten().astype(float).tolist(),
+            labels=attr_y_test.astype(int).tolist(),
+            W_trained=attr_W.tolist(),
+            image_size=16,
+            n_test=int(len(attr_X_test)),
+            label_names=attr_label_names,
+        )
+    )
+    attr_widget
     return
 
 
