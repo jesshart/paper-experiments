@@ -13,7 +13,7 @@
 
 import marimo
 
-__generated_with = "0.23.2"
+__generated_with = "0.23.3"
 app = marimo.App(width="medium")
 
 
@@ -1665,7 +1665,7 @@ def _(causal_bonf, causal_hunter, causal_result, mo, np):
                 Pairwise Dependency Mapping from High-Dimensional Assay Data
             </div>
             <div style="font-style: italic; color: #444; font-size: 13px;">
-                R. Noise<sup>1</sup>, I. Spurious<sup>1</sup>, C. Hen-Picker<sup>2</sup>
+                R. Noise<sup>1</sup>, I. Spurious<sup>1</sup>, C. Cherry-Picker<sup>2</sup>
             </div>
             <div style="font-size: 10px; color: #666; margin-top: 4px; letter-spacing: 0.5px;">
                 <sup>1</sup>Center for Overconfident Inference &middot; <sup>2</sup>Institute for Network Overfitting
