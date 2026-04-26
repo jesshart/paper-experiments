@@ -11,11 +11,14 @@ Interpretability"](https://arxiv.org/abs/2512.18792)** (Méloux, Dirupo, Portet
 across feature attribution, probing, causal discovery, sparse autoencoders,
 concept-based explanations, and mechanistic circuit search.
 
-[![Open in molab](https://marimo.io/molab-shield.svg)](https://molab.marimo.io/github/jesshart/paper-experiments/blob/main/statistical_fragility.py)
+[![Open in molab](https://marimo.io/molab-shield.svg)](https://molab.marimo.io/notebooks/nb_bZxdKEPewrPVg3cin6oi7V)
 
 ### Run locally
 
+The notebook declares its own dependencies via inline PEP 723 metadata,
+so [`uv`](https://docs.astral.sh/uv/) can run it in an isolated sandbox
+without touching your project env:
+
 ```bash
-uv sync
-uv run marimo edit statistical_fragility.py
+uvx marimo edit --sandbox statistical_fragility.py
 ```
