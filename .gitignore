@@ -14,3 +14,6 @@ __marimo__/
 
 # Type-checker cache
 .mypy_cache/
+
+# uv lockfile (notebook self-manages deps via PEP 723)
+uv.lock
